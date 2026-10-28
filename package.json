@@ -1,0 +1,1 @@
+{"author":"Amir Hussain","bin":{"ratecon-reader":"./ratecon_reader.js"},"description":"Parse a broker rate confirmation text dump into structured JSON","engines":{"node":">=18"},"license":"MIT","name":"ratecon-reader","scripts":{"test":"node --test tests/ratecon.test.js"},"version":"1.0.0"}
