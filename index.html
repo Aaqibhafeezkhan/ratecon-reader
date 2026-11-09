@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ratecon Reader - AamirTechs</title>
+<style>
+:root{--navy:#0b1f3a;--gold:#d4a72c;--bg:#f6f8fb;--ink:#1c2733;--muted:#5b6b7c;--line:#d9e1ea}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--navy);color:#fff;padding:28px 20px;border-bottom:4px solid var(--gold)}
+header .wrap{max-width:880px;margin:0 auto}
+header h1{margin:0 0 6px;font-size:1.6rem}
+header p{margin:0;color:#c8d4e4}
+main{max-width:880px;margin:24px auto;padding:0 20px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(11,31,58,.08)}
+label{display:block;font-weight:600;margin:14px 0 6px}
+.card>label:first-child{margin-top:0}
+textarea{width:100%;min-height:180px;padding:10px;border:1px solid var(--line);border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem}
+input[type=text],input[type=number],select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:.95rem;width:100%}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:4px}
+.grid label{margin:0 0 6px}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+button{background:var(--navy);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:.95rem;cursor:pointer}
+button.alt{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+button.gold{background:var(--gold);color:#0b1f3a;font-weight:600}
+pre{background:#0b1f3a;color:#eef3f9;border-radius:8px;padding:16px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;min-height:60px;font-size:.85rem}
+footer{max-width:880px;margin:0 auto 32px;padding:0 20px;color:var(--muted);font-size:.9rem}
+footer a{color:var(--navy)}
+.hint{color:var(--muted);font-size:.85rem;margin-top:6px;font-weight:400}
+</style>
+</head>
+<body>
+<header><div class="wrap"><h1>Ratecon Reader</h1><p>Parse a broker rate confirmation text dump into structured JSON: load, route, date, and rate fields without retyping them.</p></div></header>
+<main><div class="card">
+<label for="file">Rate confirmation text file</label>
+<input type="file" id="file" accept=".txt,text/plain">
+<label for="input">Or paste the rate confirmation text</label>
+<textarea id="input" spellcheck="false" placeholder="Paste the text of a rate confirmation here, or load the sample."></textarea>
+<div class="grid">
+<div><label for="opt-format">Output format</label><select id="opt-format"><option value="json" selected>JSON (CLI default)</option><option value="summary">Summary (CLI --summary)</option></select></div>
+</div>
+<div class="row"><button class="gold" id="run" type="button">Run</button><button class="alt" id="sample" type="button">Load sample</button><button class="alt" id="sample2" type="button">Load sample 2</button><button class="alt" id="download" type="button">Download report</button></div>
+<label for="out">Report</label>
+<pre id="out">Your report will appear here.</pre>
+</div></main>
+<footer>
+<p>Built by AamirTechs. <a href="https://aamirtechs.github.io/">All tools</a> | <a href="https://github.com/aamirtechs/ratecon-reader">Source</a></p>
+<p>Privacy: this tool runs 100% in your browser, nothing is uploaded.</p>
+</footer>
+<script id="core">
+// Pure logic port of ratecon_reader.js. No DOM access in this block.
+// The parsing functions are the CLI functions, unchanged in behaviour.
+// window.runTool(inputText, options): options.format is "json" (the CLI
+// default) or "summary" (the CLI --summary output). The returned string
+// ends with a newline, matching the CLI console.log output.
+function parseMoney(raw) {
+  if (raw == null) return null;
+  const match = String(raw).match(/\$?\s*([\d,]+(?:\.\d{1,2})?)/);
+  if (!match) return null;
+  const value = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(value) ? value : null;
+}
+function parseNumber(raw) {
+  if (raw == null) return null;
+  const match = String(raw).match(/([\d,]+(?:\.\d+)?)/);
+  if (!match) return null;
+  const value = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(value) ? value : null;
+}
+function parseCityState(raw) {
+  if (raw == null) return null;
+  let value = String(raw).trim().replace(/\s+\d{5}(?:-\d{4})?\s*$/, "").trim();
+  if (!value) return null;
+  const comma = value.split(",");
+  if (comma.length >= 2) {
+    return { city: comma[0].trim(), state: comma[1].trim().split(/\s+/)[0].toUpperCase(), raw: value };
+  }
+  const parts = value.split(/\s+/);
+  const last = parts[parts.length - 1];
+  if (parts.length >= 2 && /^[A-Za-z]{2}$/.test(last)) {
+    return { city: parts.slice(0, -1).join(" "), state: last.toUpperCase(), raw: value };
+  }
+  return { city: value, state: null, raw: value };
+}
+function extractDate(raw) {
+  if (raw == null) return null;
+  const value = String(raw).trim();
+  const match = value.match(/\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|[A-Za-z]+ \d{1,2},? \d{4}/);
+  return match ? match[0] : value;
+}
+function valueAfter(line, labelPattern) {
+  const match = line.match(labelPattern);
+  if (!match) return null;
+  let rest = line.slice(match[0].length).trim();
+  rest = rest.replace(/^[ :#\-.]+/, "").trim();
+  return rest || null;
+}
+const LABELS = [
+  { key: "loadNumber", patterns: [/load\s*(?:#|no\.?|number)/i] },
+  { key: "brokerName", patterns: [/broker(?:\s+name)?\b/i] },
+  { key: "brokerMc", patterns: [/broker\s+mc/i, /mc\s*(?:#|no\.?|number)?/i] },
+  { key: "origin", patterns: [/origin\b/i, /pickup\s+location\b/i, /^from\b/i] },
+  { key: "destination", patterns: [/destination\b/i, /delivery\s+location\b/i, /^to\b/i] },
+  { key: "pickupDate", patterns: [/pick\s*up\s*(?:date)?\b/i, /pickup\s+date\b/i] },
+  { key: "deliveryDate", patterns: [/delivery\s*(?:date)?\b/i, /drop\s*(?:off)?\s*date\b/i] },
+  { key: "totalRate", patterns: [/total\s*(?:rate|amount|pay)?\b/i, /\btotal\b/i] },
+  { key: "linehaul", patterns: [/line\s*haul\b/i] },
+  { key: "fuelSurcharge", patterns: [/fuel\s*surcharge\b/i, /\bFSC\b/i] },
+  { key: "miles", patterns: [/miles?\b/i, /distance\b/i] },
+  { key: "weight", patterns: [/weight\b/i] },
+  { key: "commodity", patterns: [/commodity\b/i, /\bproduct\b/i, /\bcargo\b/i, /\bfreight\b/i] },
+];
+function parseRateConfirmation(text) {
+  const result = {
+    loadNumber: null,
+    brokerName: null,
+    brokerMc: null,
+    origin: null,
+    destination: null,
+    pickupDate: null,
+    deliveryDate: null,
+    totalRate: null,
+    linehaul: null,
+    fuelSurcharge: null,
+    miles: null,
+    weight: null,
+    commodity: null,
+    notes: [],
+  };
+  const lines = String(text).split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/detention|layover/i.test(line)) {
+      result.notes.push(line);
+    }
+    for (const label of LABELS) {
+      if ((label.key === "pickupDate" || label.key === "deliveryDate") && /location/i.test(line)) continue;
+      if (label.key === "brokerName" && !/:/.test(line)) continue;
+      for (const pattern of label.patterns) {
+        const anchored = new RegExp("^(?:[^:]{0,40}?)" + pattern.source, pattern.flags);
+        const match = line.match(anchored);
+        if (!match) continue;
+        const value = valueAfter(line, pattern);
+        if (value == null || value === "") continue;
+        if (label.key === "brokerMc") {
+          const mc = value.match(/\d+/);
+          if (mc && result.brokerMc == null) result.brokerMc = mc[0];
+          continue;
+        }
+        if (label.key === "origin" || label.key === "destination") {
+          if (result[label.key] == null) result[label.key] = parseCityState(value);
+          continue;
+        }
+        if (label.key === "pickupDate" || label.key === "deliveryDate") {
+          if (result[label.key] == null) result[label.key] = extractDate(value);
+          continue;
+        }
+        if (label.key === "totalRate" || label.key === "linehaul" || label.key === "fuelSurcharge") {
+          if (result[label.key] == null) result[label.key] = parseMoney(value);
+          continue;
+        }
+        if (label.key === "miles" || label.key === "weight") {
+          if (result[label.key] == null) result[label.key] = parseNumber(value);
+          continue;
+        }
+        if (result[label.key] == null) result[label.key] = value;
+        break;
+      }
+    }
+  }
+  if (result.totalRate == null) {
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      const match = line.match(/^rate\s*[:\-]\s*(.+)$/i);
+      if (match) {
+        result.totalRate = parseMoney(match[1]);
+        break;
+      }
+    }
+  }
+  return result;
+}
+function formatSummary(data) {
+  const origin = data.origin ? data.origin.city + ", " + data.origin.state : "unknown";
+  const destination = data.destination ? data.destination.city + ", " + data.destination.state : "unknown";
+  const rows = [
+    "Load: " + (data.loadNumber || "unknown"),
+    "Broker: " + (data.brokerName || "unknown") + (data.brokerMc ? " (MC " + data.brokerMc + ")" : ""),
+    "Route: " + origin + " -> " + destination,
+    "Pickup: " + (data.pickupDate || "unknown"),
+    "Delivery: " + (data.deliveryDate || "unknown"),
+    "Rate: " + (data.totalRate != null ? "$" + data.totalRate.toFixed(2) : "unknown"),
+  ];
+  if (data.linehaul != null) rows.push("Linehaul: $" + data.linehaul.toFixed(2));
+  if (data.fuelSurcharge != null) rows.push("Fuel surcharge: $" + data.fuelSurcharge.toFixed(2));
+  if (data.miles != null) rows.push("Miles: " + data.miles);
+  if (data.weight != null) rows.push("Weight: " + data.weight);
+  if (data.commodity) rows.push("Commodity: " + data.commodity);
+  if (data.notes.length) rows.push("Notes:");
+  for (const note of data.notes) rows.push("  - " + note);
+  return rows.join("\n");
+}
+window.runTool = function (inputText, options) {
+  options = options || {};
+  var data = parseRateConfirmation(inputText == null ? "" : String(inputText));
+  if (options.format === "summary") return formatSummary(data) + "\n";
+  return JSON.stringify(data, null, 2) + "\n";
+};
+</script>
+<script>
+var SAMPLE = `RATE CONFIRMATION
+Load #: RC-88412
+Broker: Lone Star Freight LLC
+MC #: 1234567
+Origin: Dallas, TX
+Destination: Atlanta, GA
+Pick Up Date: 10/28/2026
+Delivery Date: 10/30/2026
+Total Rate: $1,850.00
+Linehaul: $1,650.00
+Fuel Surcharge: $200.00
+Miles: 820
+Weight: 42000 lbs
+Commodity: Paper rolls
+Detention: $75 per hour after 2 hours free time.
+`;
+var SAMPLE2 = `BROKER RATE CONFIRMATION
+Load No. 99177
+Broker Name: Blue Ridge Logistics
+MC Number: 765432
+Pickup Location: Houston TX 77001
+Delivery Location: Memphis, TN
+Pick Up: 2026-11-02
+Delivery: 2026-11-04
+Rate: 1450.00
+Miles: 640
+Weight: 38000
+Freight: Steel coils
+Layover note: Layover pays $250 per day if carrier is held overnight.
+`;
+var inputEl = document.getElementById("input");
+var outEl = document.getElementById("out");
+var lastReport = "";
+document.getElementById("file").addEventListener("change", function (ev) {
+  var f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  var reader = new FileReader();
+  reader.onload = function () { inputEl.value = String(reader.result || ""); };
+  reader.readAsText(f);
+});
+document.getElementById("sample").addEventListener("click", function () { inputEl.value = SAMPLE; });
+document.getElementById("sample2").addEventListener("click", function () { inputEl.value = SAMPLE2; });
+document.getElementById("run").addEventListener("click", function () {
+  var options = { format: document.getElementById("opt-format").value };
+  try {
+    lastReport = window.runTool(inputEl.value, options);
+    outEl.textContent = lastReport;
+  } catch (e) {
+    lastReport = "ERROR: " + e.message + "\n";
+    outEl.textContent = lastReport;
+  }
+});
+document.getElementById("download").addEventListener("click", function () {
+  var text = lastReport || outEl.textContent;
+  var blob = new Blob([text], { type: "text/plain" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "ratecon-report.txt";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>

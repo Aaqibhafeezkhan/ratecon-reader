@@ -1,4 +1,5 @@
 # ratecon-reader
+**Live tool:** https://aamirtechs.github.io/ratecon-reader/ (runs in your browser, no install)
 
 A pure JavaScript, zero dependency Node CLI that parses a broker rate confirmation text dump into structured JSON. Paste or save the text you get from a PDF export (the style of `pdftotext` output) and get load, route, date, and rate fields back without retyping them.
 
